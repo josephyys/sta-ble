@@ -79,11 +79,38 @@ static const struct device *cmd_uart = DEVICE_DT_GET(DT_NODELABEL(uart0));
 
 
 static void handle_cmd(const char *cmd) {
+    printk("Processing command: %s\n", cmd);
+    
     if (strncmp(cmd, "wifi_connect", 12) == 0) {
         char ssid[64], pw[64];
         if (sscanf(cmd, "wifi_connect ssid=%63s pw=%63s", ssid, pw) == 2) {
             printk("Connecting to SSID: %s, PW: %s\n", ssid, pw);
-            // 呼叫 Wi-Fi 驅動程式的啟動函數，需實作你的 wifi_connect_api(ssid, pw)
+            
+            struct wifi_connect_req_params cnx_params = {
+                .ssid = ssid,
+                .ssid_length = strlen(ssid),
+                .psk = pw,
+                .psk_length = strlen(pw),
+                .security = WIFI_SECURITY_TYPE_PSK,
+                .channel = WIFI_CHANNEL_ANY,
+            };
+            
+            struct net_if *iface = net_if_get_first_wifi();
+            if (!iface) {
+                printk("No WiFi interface found\n");
+                return;
+            }
+            
+            printk("Sending connection request...\n");
+            int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, 
+                             &cnx_params, sizeof(cnx_params));
+            if (ret) {
+                printk("Connection request failed: %d\n", ret);
+            } else {
+                printk("Connection request sent successfully\n");
+            }
+        } else {
+            printk("Invalid format. Use: wifi_connect ssid=YOURSSID pw=YOURPASSWORD\n");
         }
     }
 }
@@ -277,7 +304,7 @@ static int wifi_connect(void)
 		return -ENOEXEC;
 	}
 
-	LOG_INF("Connection requested");
+	LOG_INF("Connection requested");	
 
 	return 0;
 }
@@ -511,11 +538,28 @@ int main_old(void)
 	return 0;
 }
 
+/**
+ * Helper function to test WiFi connection using handle_cmd
+ */
+static void test_wifi_connect(const char *ssid, const char *password)
+{
+    char cmd_buffer[256];
+    
+    // Construct the command string in the format handle_cmd expects
+    snprintf(cmd_buffer, sizeof(cmd_buffer), "wifi_connect ssid=%s pw=%s", ssid, password);
+    
+    // Print debug message
+    printk("Testing WiFi connection with command: %s\n", cmd_buffer);
+    
+    // Call the command handler
+    handle_cmd(cmd_buffer);
+}
 
 static struct k_thread uart_thread;
 K_THREAD_STACK_DEFINE(uart_stack, 4096);
 
 void main(void) {
+	int ret = 0;
     printk("System Boot\n");
 
 	// cmd_uart = device_get_binding(CMD_UART_LABEL);
@@ -541,4 +585,18 @@ void main(void) {
                     K_PRIO_PREEMPT(7),
                     0,
                     K_NO_WAIT);
+
+	net_mgmt_callback_init();
+
+// #ifdef CONFIG_WIFI_READY_LIB
+// 	ret = register_wifi_ready();
+// 	if (ret) {
+// 		return ret;
+// 	}
+// 	k_thread_start(start_wifi_thread_id);
+// #else
+// 	start_app();
+// #endif /* CONFIG_WIFI_READY_LIB */
+test_wifi_connect("d10", "0928099869");
+
 }
