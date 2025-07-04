@@ -23,6 +23,10 @@ LOG_MODULE_REGISTER(sta, CONFIG_LOG_DEFAULT_LEVEL);
 #include <zephyr/net/net_event.h>
 #include <zephyr/drivers/gpio.h>
 
+#include <zephyr/drivers/uart.h>
+#include <string.h>
+
+
 #ifdef CONFIG_WIFI_READY_LIB
 #include <net/wifi_ready.h>
 #endif /* CONFIG_WIFI_READY_LIB */
@@ -60,6 +64,48 @@ static struct net_mgmt_event_callback net_shell_mgmt_cb;
 static K_SEM_DEFINE(wifi_ready_state_changed_sem, 0, 1);
 static bool wifi_ready_status;
 #endif /* CONFIG_WIFI_READY_LIB */
+
+
+// #define CMD_UART_LABEL "UART_0"
+
+#define MAX_CMD_LEN 128
+
+#define UART_RX_BUF_SIZE 128
+static char rx_buf[UART_RX_BUF_SIZE];
+static int rx_pos = 0;
+
+// static const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(uart1));
+static const struct device *cmd_uart = DEVICE_DT_GET(DT_NODELABEL(uart0));
+
+
+static void handle_cmd(const char *cmd) {
+    if (strncmp(cmd, "wifi_connect", 12) == 0) {
+        char ssid[64], pw[64];
+        if (sscanf(cmd, "wifi_connect ssid=%63s pw=%63s", ssid, pw) == 2) {
+            printk("Connecting to SSID: %s, PW: %s\n", ssid, pw);
+            // 呼叫 Wi-Fi 驅動程式的啟動函數，需實作你的 wifi_connect_api(ssid, pw)
+        }
+    }
+}
+
+void uart_rx_thread(void *p1, void *p2, void *p3) {
+    uint8_t c;
+    char buf[MAX_CMD_LEN];
+    int pos = 0;
+
+    while (1) {
+        uart_poll_in(cmd_uart, &c);
+
+        if (c == '\n' || c == '\r') {
+            buf[pos] = '\0';
+            handle_cmd(buf);
+            pos = 0;
+        } else if (pos < MAX_CMD_LEN - 1) {
+            buf[pos++] = c;
+        }
+        k_sleep(K_MSEC(10));
+    }
+}
 
 static struct {
 	const struct shell *sh;
@@ -402,7 +448,52 @@ static int register_wifi_ready(void)
 }
 #endif /* CONFIG_WIFI_READY_LIB */
 
-int main(void)
+
+
+
+void uart_rx_handler(const struct device *dev, void *user_data) {
+    uint8_t c;
+    while (uart_fifo_read(dev, &c, 1)) {
+        if (c == '\n' || c == '\r') {
+            rx_buf[rx_pos] = 0;
+            if (strncmp(rx_buf, "wifi ", 5) == 0) {
+                char ssid[32], psk[64];
+                if (sscanf(rx_buf, "wifi %31s %63s", ssid, psk) == 2) {
+                    struct wifi_connect_req_params cnx_params = {
+                        .ssid = ssid,
+                        .ssid_length = strlen(ssid),
+                        .psk = psk,
+                        .psk_length = strlen(psk),
+                        .security = WIFI_SECURITY_TYPE_PSK,
+                        .channel = WIFI_CHANNEL_ANY,
+                    };
+                    struct net_if *iface = net_if_get_default();
+                    net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &cnx_params, sizeof(cnx_params));
+                }
+            }
+            rx_pos = 0;
+        } else if (rx_pos < UART_RX_BUF_SIZE - 1) {
+            rx_buf[rx_pos++] = c;
+        }
+    }
+}
+void process_uart_command(char *cmd) {
+    // Add these lines
+    printk("UART CMD RECEIVED: '%s'\n", cmd);
+    
+    // Before parsing the command
+    printk("Starting command processing...\n");
+    
+    // Add more printk statements throughout your command parsing logic
+    if (strncmp(cmd, "wifi_connect", 12) == 0) {
+        printk("WiFi connect command detected\n");
+        // Your existing processing code
+    }
+    
+    // After command execution
+    printk("Command processing complete\n");
+}
+int main_old(void)
 {
 	int ret = 0;
 
@@ -417,5 +508,37 @@ int main(void)
 #else
 	start_app();
 #endif /* CONFIG_WIFI_READY_LIB */
-	return ret;
+	return 0;
+}
+
+
+static struct k_thread uart_thread;
+K_THREAD_STACK_DEFINE(uart_stack, 4096);
+
+void main(void) {
+    printk("System Boot\n");
+
+	// cmd_uart = device_get_binding(CMD_UART_LABEL);
+    // if (!cmd_uart) {
+    //     printk("Failed to bind command UART\n");
+    //     return;
+    // }
+
+	uart_irq_callback_set(cmd_uart, uart_rx_handler);
+    uart_irq_rx_enable(cmd_uart);
+
+    printk("Custom UART command handler initialized on UART1\n");
+    printk("UART1 initialized for commands, baud: %d\n", 115200);
+
+
+
+    // Create thread using the globally defined stack and thread struct
+    k_thread_create(&uart_thread, 
+                    uart_stack,
+                    K_THREAD_STACK_SIZEOF(uart_stack),
+                    uart_rx_thread,
+                    NULL, NULL, NULL,
+                    K_PRIO_PREEMPT(7),
+                    0,
+                    K_NO_WAIT);
 }
