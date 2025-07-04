@@ -73,17 +73,22 @@ static bool wifi_ready_status;
 #define UART_RX_BUF_SIZE 128
 static char rx_buf[UART_RX_BUF_SIZE];
 static int rx_pos = 0;
+static volatile bool cmd_ready = false;
+static char cmd_copy[UART_RX_BUF_SIZE];
+
+// At the beginning of your file, with other global variables
+static K_MUTEX_DEFINE(cmd_mutex);
 
 // static const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(uart1));
 static const struct device *cmd_uart = DEVICE_DT_GET(DT_NODELABEL(uart0));
-
+static void test_wifi_connect(const char *ssid, const char *password);
 
 static void handle_cmd(const char *cmd) {
     printk("Processing command: %s\n", cmd);
     
     if (strncmp(cmd, "wifi_connect", 12) == 0) {
         char ssid[64], pw[64];
-        if (sscanf(cmd, "wifi_connect ssid=%63s pw=%63s", ssid, pw) == 2) {
+        if (sscanf(cmd, "wifi_connect %63s %63s", ssid, pw) == 2) {
             printk("Connecting to SSID: %s, PW: %s\n", ssid, pw);
             
             struct wifi_connect_req_params cnx_params = {
@@ -121,16 +126,19 @@ void uart_rx_thread(void *p1, void *p2, void *p3) {
     int pos = 0;
 
     while (1) {
-        uart_poll_in(cmd_uart, &c);
-
-        if (c == '\n' || c == '\r') {
-            buf[pos] = '\0';
-            handle_cmd(buf);
-            pos = 0;
-        } else if (pos < MAX_CMD_LEN - 1) {
-            buf[pos++] = c;
+		if (cmd_ready) {
+            // Copy the command in a thread-safe way
+            k_mutex_lock(&cmd_mutex, K_FOREVER);
+            strcpy(cmd_copy, rx_buf);
+            cmd_ready = false;
+            k_mutex_unlock(&cmd_mutex);
+            
+            // Now process the command in thread context
+			handle_cmd(cmd_copy);
         }
-        k_sleep(K_MSEC(10));
+        
+        // Sleep to prevent CPU hogging
+        k_msleep(10);
     }
 }
 
@@ -477,27 +485,25 @@ static int register_wifi_ready(void)
 
 
 
-
 void uart_rx_handler(const struct device *dev, void *user_data) {
     uint8_t c;
     while (uart_fifo_read(dev, &c, 1)) {
+        // Debug output for every character received
+        printk("UART RX: 0x%02x ('%c')\n", c, isprint(c) ? c : '.');
+   		
         if (c == '\n' || c == '\r') {
             rx_buf[rx_pos] = 0;
-            if (strncmp(rx_buf, "wifi ", 5) == 0) {
+            if (strncmp(rx_buf, "wifi", 4) == 0) {
                 char ssid[32], psk[64];
-                if (sscanf(rx_buf, "wifi %31s %63s", ssid, psk) == 2) {
-                    struct wifi_connect_req_params cnx_params = {
-                        .ssid = ssid,
-                        .ssid_length = strlen(ssid),
-                        .psk = psk,
-                        .psk_length = strlen(psk),
-                        .security = WIFI_SECURITY_TYPE_PSK,
-                        .channel = WIFI_CHANNEL_ANY,
-                    };
-                    struct net_if *iface = net_if_get_default();
-                    net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &cnx_params, sizeof(cnx_params));
+				printk("UART RX: %s\n", rx_buf);
+                if (sscanf(rx_buf, "wifi_connect %31s %63s", ssid, psk) == 2) {
+					printk("wifi_connect %s %s\n", ssid, psk);
+					cmd_ready = true;  // Set a flag for execution
                 }
-            }
+            } else {
+				printk("unkown cmd %s\n", rx_buf);
+
+			}
             rx_pos = 0;
         } else if (rx_pos < UART_RX_BUF_SIZE - 1) {
             rx_buf[rx_pos++] = c;
@@ -556,11 +562,14 @@ static void test_wifi_connect(const char *ssid, const char *password)
 }
 
 static struct k_thread uart_thread;
-K_THREAD_STACK_DEFINE(uart_stack, 4096);
+K_THREAD_STACK_DEFINE(uart_stack, 8192);
 
 void main(void) {
 	int ret = 0;
     printk("System Boot\n");
+
+    // Initialize mutex
+    k_mutex_init(&cmd_mutex);	
 
 	// cmd_uart = device_get_binding(CMD_UART_LABEL);
     // if (!cmd_uart) {
@@ -597,6 +606,7 @@ void main(void) {
 // #else
 // 	start_app();
 // #endif /* CONFIG_WIFI_READY_LIB */
-test_wifi_connect("d10", "0928099869");
+// 
+// test_wifi_connect("d10", "0928099869");
 
 }
