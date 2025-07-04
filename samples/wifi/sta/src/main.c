@@ -489,7 +489,10 @@ void uart_rx_handler(const struct device *dev, void *user_data) {
     uint8_t c;
     while (uart_fifo_read(dev, &c, 1)) {
         // Debug output for every character received
-        printk("UART RX: 0x%02x ('%c')\n", c, isprint(c) ? c : '.');
+        // printk("UART RX: 0x%02x ('%c')\n", c, isprint(c) ? c : '.');
+		//echo back the character
+		uart_fifo_fill(dev, &c, 1);
+		// printk("%c", c);
    		
         if (c == '\n' || c == '\r') {
             rx_buf[rx_pos] = 0;
