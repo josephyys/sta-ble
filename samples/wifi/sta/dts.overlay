@@ -5,6 +5,7 @@
         zephyr,console = &uart0;      // Console on UART0
         zephyr,shell-uart = &uart0;
         zephyr,slip = &uart1;         // SLIP on UART1
+        zephyr,uart-pipe = &uart1;  // Add this line
     };
 };
 

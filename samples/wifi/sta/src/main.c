@@ -83,6 +83,175 @@ static K_MUTEX_DEFINE(cmd_mutex);
 static const struct device *cmd_uart = DEVICE_DT_GET(DT_NODELABEL(uart0));
 static void test_wifi_connect(const char *ssid, const char *password);
 
+static void cmd_wifi_info(void)
+{
+    struct net_if *iface = net_if_get_first_wifi();
+    
+    printk("WiFi Status:\n");
+    printk("------------\n");
+    
+    if (!iface) {
+        printk("No WiFi interface found\n");
+        return;
+    }
+    
+    // Print WiFi interface status
+    printk("Interface: %d\n", net_if_get_by_iface(iface));
+    printk("Status: %s\n", net_if_is_up(iface) ? "UP" : "DOWN");
+    
+    // Get IP address if available - use NET_ADDR_PREFERRED enum
+    struct in_addr *addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+    char buf[NET_IPV4_ADDR_LEN];
+    
+    if (addr) {
+        printk("IP Address: %s\n", 
+               net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
+    } else {
+        printk("IP Address: Not assigned\n");
+    }
+    
+    // Print connection state from context
+    // printk("Connected: %s\n", context.connected ? "Yes" : "No");
+    // if (context.connected) {
+    //     printk("SSID: %s\n", context.ssid);
+    // }
+}
+
+static void cmd_slip_setup(void)
+{
+    struct net_if *iface = net_if_get_by_index(1);
+    
+    if (!iface) {
+        printk("SLIP interface not found\n");
+        return;
+    }
+    
+    // First bring it down to reset state
+    net_if_down(iface);
+    k_sleep(K_MSEC(500));
+    
+    // Then try to bring it up
+    int ret = net_if_up(iface);
+    printk("SLIP interface activation result: %d\n", ret);
+    
+    // Check status
+    k_sleep(K_MSEC(500));
+    printk("SLIP interface status: %s\n", 
+           net_if_is_up(iface) ? "UP" : "DOWN");
+}
+
+static void cmd_slip_info(void)
+{
+    struct net_if *iface;
+    int i = 0;
+    
+    printk("Network Interfaces:\n");
+    printk("------------------\n");
+    
+    for (i = 0; i < 8; i++) {  // Check first 8 interfaces
+        iface = net_if_get_by_index(i);
+        if (!iface) {
+            continue;
+        }
+        
+        // Print basic interface information
+        printk("Interface %d:\n", i);
+        printk("  Status: %s\n", net_if_is_up(iface) ? "UP" : "DOWN");
+        printk("  MTU: %d\n", net_if_get_mtu(iface));
+        
+        // Try to identify interface type
+        if (net_if_get_by_iface(iface) == 1) {
+            printk("  Type: Likely SLIP (interface #1)\n");
+        } else if (net_if_get_by_iface(iface) == 0) {
+            printk("  Type: Likely WiFi (interface #0)\n");
+        }
+    }
+}
+
+static void cmd_net_scan(void)
+{
+    printk("Scanning all network interfaces:\n");
+    printk("-------------------------------\n");
+    
+    for (int i = 0; i < 8; i++) {
+        struct net_if *iface = net_if_get_by_index(i);
+        if (!iface) {
+            continue;
+        }
+        
+        // Print basic info
+        printk("Interface %d:\n", i);
+        printk("  Status: %s\n", net_if_is_up(iface) ? "UP" : "DOWN");
+        printk("  MTU: %d\n", net_if_get_mtu(iface));
+        
+        // Try to get IP address info
+        char buf[NET_IPV4_ADDR_LEN];
+        struct in_addr *addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+        if (addr) {
+            printk("  IPv4: %s\n", net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
+        }
+        
+        // Try to activate if down
+        if (!net_if_is_up(iface)) {
+            int ret = net_if_up(iface);
+            printk("  Activation attempt: %d\n", ret);
+            k_sleep(K_MSEC(100));
+            printk("  Status after attempt: %s\n", 
+                   net_if_is_up(iface) ? "UP" : "DOWN");
+        }
+        
+        printk("\n");
+    }
+    
+    // Also remove the unused function warning
+    #ifdef CONFIG_SLIP
+    printk("SLIP support is enabled in config\n");
+    #else
+    printk("SLIP support is NOT enabled in config\n");
+    #endif
+}
+
+static void cmd_ip_check(void) {
+    printk("Network Interface IP Check:\n");
+    printk("--------------------------\n");
+    
+    for (int i = 0; i < 8; i++) {
+        struct net_if *iface = net_if_get_by_index(i);
+        if (!iface) continue;
+        
+        printk("Interface %d: %s\n", i, 
+               net_if_is_up(iface) ? "UP" : "DOWN");
+        
+        // Try all possible address states
+        char buf[NET_IPV4_ADDR_LEN];
+        struct in_addr *addr;
+        
+        // Check PREFERRED addresses (primary addresses)
+        addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+        if (addr) {
+            printk("  IPv4 (Preferred): %s\n", 
+                   net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
+        }
+        
+        // Check TENTATIVE addresses (being verified)
+        addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_TENTATIVE);
+        if (addr) {
+            printk("  IPv4 (Tentative): %s\n", 
+                   net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
+        }
+        
+        // Check ANY addresses (any state)
+        addr = net_if_ipv4_get_global_addr(iface, NET_ADDR_ANY);
+        if (addr) {
+            printk("  IPv4 (Any): %s\n", 
+                   net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
+        }
+        
+        // Skip direct config access - API changed in v3.0.2
+        printk("  (Direct config access not available in v3.0.2)\n");
+    }
+}
+
 static void handle_cmd(const char *cmd) {
     printk("Processing command: %s\n", cmd);
     
@@ -117,13 +286,35 @@ static void handle_cmd(const char *cmd) {
         } else {
             printk("Invalid format. Use: wifi_connect ssid=YOURSSID pw=YOURPASSWORD\n");
         }
-    }
+    } else if (strncmp(cmd, "slip_info", 14) == 0) {
+		cmd_slip_info();
+    } else if (strncmp(cmd, "slip_setup", 14) == 0) {
+		cmd_slip_setup();
+	} else if (strncmp(cmd, "wifi_info", 9) == 0) {
+		cmd_wifi_info();
+	} else if (strncmp(cmd, "net_scan", 8) == 0) {
+		cmd_net_scan();
+	} else if (strncmp(cmd, "slip2_setup", 11) == 0) {
+		struct net_if *iface = net_if_get_by_index(2);
+		if (iface) {
+			printk("Activating Interface 2 as SLIP\n");
+			int ret = net_if_up(iface);
+			printk("Result: %d\n", ret);
+		}
+	} else if (strncmp(cmd, "ip_check", 8) == 0) {
+		cmd_ip_check();
+	}
+	else {
+		printk("Invalid cmd. %s\n", cmd);
+
+	} 
 }
 
+
 void uart_rx_thread(void *p1, void *p2, void *p3) {
-    uint8_t c;
-    char buf[MAX_CMD_LEN];
-    int pos = 0;
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
 
     while (1) {
 		if (cmd_ready) {
@@ -496,17 +687,19 @@ void uart_rx_handler(const struct device *dev, void *user_data) {
    		
         if (c == '\n' || c == '\r') {
             rx_buf[rx_pos] = 0;
-            if (strncmp(rx_buf, "wifi", 4) == 0) {
-                char ssid[32], psk[64];
-				printk("UART RX: %s\n", rx_buf);
-                if (sscanf(rx_buf, "wifi_connect %31s %63s", ssid, psk) == 2) {
-					printk("wifi_connect %s %s\n", ssid, psk);
-					cmd_ready = true;  // Set a flag for execution
-                }
-            } else {
-				printk("unkown cmd %s\n", rx_buf);
+			printk("cmd %s \n", rx_buf);
+			cmd_ready = true;  // Set a flag for execution
+            // if (strncmp(rx_buf, "wifi", 4) == 0) {
+            //     char ssid[32], psk[64];
+			// 	printk("UART RX: %s\n", rx_buf);
+            //     if (sscanf(rx_buf, "wifi_connect %31s %63s", ssid, psk) == 2) {
+			// 		printk("wifi_connect %s %s\n", ssid, psk);
+			// 		cmd_ready = true;  // Set a flag for execution
+            //     }
+            // } else {
+			// 	printk("unkown cmd %s\n", rx_buf);
 
-			}
+			// }
             rx_pos = 0;
         } else if (rx_pos < UART_RX_BUF_SIZE - 1) {
             rx_buf[rx_pos++] = c;
@@ -600,6 +793,23 @@ void main(void) {
 
 	net_mgmt_callback_init();
 
+	k_sleep(K_SECONDS(1));  // Wait for network stack to stabilize
+    
+  
+	// Try to find and activate SLIP interface
+    for (int i = 0; i < 8; i++) {
+        struct net_if *iface = net_if_get_by_index(i);
+        if (iface) {
+            // Try to identify if this is a SLIP interface
+            // For SLIP, we can check MTU (typically 1500) and whether it's not the loopback
+            if (net_if_get_mtu(iface) == 1500 && !net_if_is_up(iface)) {
+                printk("Found likely SLIP interface (index %d)\n", i);
+                int ret = net_if_up(iface);
+                printk("Bringing up SLIP interface: %s (result: %d)\n", 
+                       ret == 0 ? "SUCCESS" : "FAILED", ret);
+            }
+        }
+    }
 // #ifdef CONFIG_WIFI_READY_LIB
 // 	ret = register_wifi_ready();
 // 	if (ret) {
