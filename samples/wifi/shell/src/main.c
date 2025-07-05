@@ -101,8 +101,8 @@ int main(void)
 #endif
 
 	/* Initialize AT command interface for NUC980 */
-	extern int at_commands_init(void);
-	at_commands_init();
+	/* extern int at_commands_init(void);
+	at_commands_init(); */
 
 	return 0;
 }
