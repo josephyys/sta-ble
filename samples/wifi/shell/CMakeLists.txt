@@ -19,4 +19,4 @@ target_sources_ifdef(CONFIG_NRF70_PROMISC_DATA_RX
 	PRIVATE
 	src/wifi_promiscuous_shell.c)
 
-target_sources(app PRIVATE src/main.c)
+target_sources(app PRIVATE src/main.c src/at_commands.c src/at_shell_commands.c)
